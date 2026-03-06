@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+rednote.db
+.env
+backups/
+exports/
+crawler_output/
+iterations/
+*.egg-info/

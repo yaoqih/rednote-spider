@@ -1,0 +1,10 @@
+[Unit]
+Description=rednote discover cycle
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=__PROJECT_DIR__
+User=__RUN_USER__
+ExecStart=/bin/bash scripts/run_scheduled_cycle.sh discover
