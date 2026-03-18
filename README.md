@@ -41,7 +41,6 @@ OPPORTUNITY_LLM_MODEL=gpt-4.1-mini
 OPPORTUNITY_LLM_TIMEOUT_SECONDS=600
 OPPORTUNITY_LLM_TEMPERATURE=0.1
 SCHED_DISCOVER_LOOP_INTERVAL_SECONDS=900
-SCHED_OPPORTUNITY_LOOP_INTERVAL_SECONDS=600
 LOG_LEVEL=INFO
 ```
 
@@ -91,7 +90,7 @@ python scripts/run_discover_cycle.py \
   --command-template 'python external_crawler.py --keywords "{keywords}" --max-notes {max_notes}'
 ```
 
-页面里的 `Discover Scheduler` 可配置 `discover/opportunity` 的 `enabled` 与 `loop interval seconds`；`Discover Watchlist` 可新增关键词并调整每个关键词的轮询分钟与启用状态。
+页面里的 `Discover Scheduler` 可配置单一 `discover` 调度的 `enabled`、`loop interval seconds` 与 `note limit`；该调度会在每轮 discover 完成后自动执行 opportunity 与失败重试。`Discover Watchlist` 可新增关键词并调整每个关键词的轮询分钟与启用状态。
 
 ## 登录控制
 
@@ -121,7 +120,7 @@ python scripts/run_product_opportunity_cycle.py --task-id 123
 - 默认使用 `OPPORTUNITY_LLM_PROVIDER=openai`。
 - 本地离线调试/测试可用 `OPPORTUNITY_LLM_PROVIDER=mock`。
 - 产品评分是触发式：新产品首次评分，已有关联产品仅在证据量达到上次基线 2 倍时重评；其余轮次复用缓存评分。
-- crawl/discover 在“抓取+入库”完成后即标记任务 `done`；机会评估通过独立脚本异步执行。
+- crawl/discover 在“抓取+入库”完成后即标记任务 `done`；托管 discover 调度会在同一轮内继续执行机会评估与失败重试。
 - `done` 任务重复执行机会评估时，默认只重试失败 note，不重复扫描已映射/已忽略 note。
 - 失败重试带指数退避：`--retry-backoff-base-minutes` 与 `--retry-backoff-max-minutes`。
 - `ignored` 会持久化到 `opportunity_note_ignored`，保留初筛分数与原因证据。

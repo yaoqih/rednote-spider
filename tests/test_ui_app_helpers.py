@@ -92,10 +92,7 @@ def test_fetch_scheduler_configs_exposes_discover_note_limit(tmp_path: Path):
     assert rows[0]["enabled"] is True
     assert rows[0]["loop_interval_seconds"] == 120
     assert rows[0]["note_limit"] == 11
-    assert rows[1]["mode"] == "opportunity"
-    assert rows[1]["enabled"] is False
-    assert rows[1]["loop_interval_seconds"] == 300
-    assert rows[1]["note_limit"] is None
+    assert len(rows) == 1
 
 
 def test_fetch_product_overview_returns_global_product_summary_and_distinct_linked_notes(tmp_path: Path):

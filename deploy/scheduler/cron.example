@@ -6,6 +6,3 @@ PATH=/usr/local/bin:/usr/bin:/bin
 
 # Discover crawl every 15 minutes.
 */15 * * * * cd __PROJECT_DIR__ && bash scripts/run_scheduled_cycle.sh discover >> logs/scheduler-discover.log 2>&1
-
-# Opportunity evaluation every 10 minutes.
-*/10 * * * * cd __PROJECT_DIR__ && bash scripts/run_scheduled_cycle.sh opportunity >> logs/scheduler-opportunity.log 2>&1

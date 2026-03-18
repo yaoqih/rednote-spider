@@ -555,7 +555,7 @@ def _draw_global_product_results(factory: sessionmaker[Session]) -> None:
     m6.metric("Created 决策", int(summary.get("created_notes", 0)))
 
     if not product_rows:
-        st.info("当前还没有产品结果。先完成 crawl/discover/opportunity 流程。")
+        st.info("当前还没有产品结果。先完成 crawl/discover 流程，系统会在同一轮内自动执行机会评估。")
         return
 
     latest_assessment_at = max((row["assessment_updated_at"] or "" for row in product_rows), default="") or None
@@ -1260,19 +1260,17 @@ def _draw_task_management(factory: sessionmaker[Session]) -> None:
 def _draw_schedule_management(factory: sessionmaker[Session]) -> None:
     st.subheader("Schedules")
     scheduler_rows = _fetch_scheduler_configs(factory)
-    st.caption("Global Scheduler")
+    st.caption("Discover scheduler is the single runtime entrypoint and now runs opportunity processing in the same loop.")
     st.dataframe(scheduler_rows, width="stretch", hide_index=True)
+
+    if not scheduler_rows:
+        st.info("当前还没有 discover 调度配置。")
+        return
 
     scheduler_col1, scheduler_col2 = st.columns([2, 3])
     with scheduler_col1:
         supports_note_limit = _scheduler_service_supports_note_limit(SchedulerConfigService)
-        selected_mode = st.selectbox(
-            "Scheduler Mode",
-            options=[row["mode"] for row in scheduler_rows],
-            format_func=lambda mode: "Discover" if mode == "discover" else "Opportunity",
-            key="scheduler_mode_selector",
-        )
-        selected_scheduler = next(row for row in scheduler_rows if row["mode"] == selected_mode)
+        selected_scheduler = scheduler_rows[0]
         with st.form("scheduler_config_form"):
             scheduler_enabled = st.checkbox("Enabled", value=bool(selected_scheduler["enabled"]))
             loop_interval_seconds = st.number_input(
@@ -1281,39 +1279,36 @@ def _draw_schedule_management(factory: sessionmaker[Session]) -> None:
                 value=int(selected_scheduler["loop_interval_seconds"]),
                 step=1,
             )
-            discover_note_limit = None
-            if selected_mode == "discover":
-                discover_note_limit = st.number_input(
-                    "Discover Note Limit",
-                    min_value=1,
-                    value=int(selected_scheduler["note_limit"] or settings.sched_discover_note_limit),
-                    step=1,
-                    disabled=not supports_note_limit,
-                )
+            discover_note_limit = st.number_input(
+                "Discover Note Limit",
+                min_value=1,
+                value=int(selected_scheduler["note_limit"] or settings.sched_discover_note_limit),
+                step=1,
+                disabled=not supports_note_limit,
+            )
             save_scheduler = st.form_submit_button("Save Scheduler Config")
         if save_scheduler:
             try:
-                if selected_mode == "discover" and not supports_note_limit:
+                if not supports_note_limit:
                     raise ValueError(
                         "Current Streamlit process loaded legacy scheduler code. Restart the UI server, then save Discover Note Limit again."
                     )
                 row = SchedulerConfigService(factory).set_config(
-                    selected_mode,
+                    "discover",
                     enabled=bool(scheduler_enabled),
                     loop_interval_seconds=int(loop_interval_seconds),
-                    note_limit=int(discover_note_limit) if discover_note_limit is not None else None,
+                    note_limit=int(discover_note_limit),
                 )
                 message = (
                     f"scheduler_updated mode={row.mode} enabled={row.enabled} interval={row.loop_interval_seconds}s"
                 )
-                if row.mode == "discover":
-                    message += f" note_limit={row.note_limit}"
+                message += f" note_limit={row.note_limit}"
                 st.success(message)
                 st.rerun()
             except Exception as exc:  # noqa: BLE001
                 st.error(str(exc))
     with scheduler_col2:
-        st.info("discover/opportunity 固定两条配置，只允许查看与修改，不支持新增删除。")
+        st.info("独立 opportunity 调度已取消；discover 每轮结束后会自动执行 opportunity 和失败重试。")
         if not supports_note_limit:
             st.warning("当前进程仍在使用旧版 scheduler 模块。重启 Streamlit 后即可使用 Discover Note Limit。")
 

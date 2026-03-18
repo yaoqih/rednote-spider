@@ -22,13 +22,10 @@ def test_scheduler_config_service_bootstraps_default_modes(tmp_path: Path):
 
     rows = service.list_configs()
 
-    assert [row.mode for row in rows] == ["discover", "opportunity"]
+    assert [row.mode for row in rows] == ["discover"]
     assert rows[0].enabled is True
     assert rows[0].loop_interval_seconds == 900
     assert rows[0].note_limit == 20
-    assert rows[1].enabled is True
-    assert rows[1].loop_interval_seconds == 600
-    assert rows[1].note_limit is None
 
 
 def test_scheduler_config_service_updates_enabled_and_interval(tmp_path: Path):
@@ -64,13 +61,13 @@ def test_scheduler_config_service_rejects_invalid_inputs(tmp_path: Path):
         assert "loop_interval_seconds must be >= 1" in str(exc)
 
     try:
+        service.set_config("opportunity", enabled=True, loop_interval_seconds=60)
+        raise AssertionError("unsupported mode should fail")
+    except ValueError as exc:
+        assert "unsupported mode" in str(exc)
+
+    try:
         service.set_config("discover", enabled=True, loop_interval_seconds=60, note_limit=0)
         raise AssertionError("non-positive note limit should fail")
     except ValueError as exc:
         assert "note_limit must be >= 1" in str(exc)
-
-    try:
-        service.set_config("opportunity", enabled=True, loop_interval_seconds=60, note_limit=5)
-        raise AssertionError("opportunity note limit should fail")
-    except ValueError as exc:
-        assert "note_limit is only supported for discover mode" in str(exc)

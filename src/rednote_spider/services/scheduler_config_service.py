@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from ..config import settings
 from ..models import SchedulerRuntimeConfig
 
-SUPPORTED_SCHEDULER_MODES: tuple[str, ...] = ("discover", "opportunity")
+SUPPORTED_SCHEDULER_MODES: tuple[str, ...] = ("discover",)
 
 
 class SchedulerConfigService:
@@ -85,15 +85,11 @@ class SchedulerConfigService:
     def _default_interval(self, mode: str) -> int:
         if mode == "discover":
             return int(settings.sched_discover_loop_interval_seconds)
-        if mode == "opportunity":
-            return int(settings.sched_opportunity_loop_interval_seconds)
         raise ValueError(f"unsupported mode: {mode}")
 
     def _default_note_limit(self, mode: str) -> int | None:
         if mode == "discover":
             return int(settings.sched_discover_note_limit)
-        if mode == "opportunity":
-            return None
         raise ValueError(f"unsupported mode: {mode}")
 
     def _normalize_mode(self, mode: str) -> str:

@@ -9,7 +9,7 @@ from pathlib import Path
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
-from rednote_spider.models import Base, DiscoverWatchKeyword, RawNote, SchedulerRuntimeConfig
+from rednote_spider.models import Base, DiscoverWatchKeyword, ProductOpportunity, RawNote, SchedulerRuntimeConfig
 
 
 def _script_path() -> Path:
@@ -114,11 +114,42 @@ def test_run_managed_scheduler_script_runs_enabled_discover(tmp_path: Path):
     assert payload["status"] == "completed"
     assert payload["loop_interval_seconds"] == 45
     assert payload["note_limit"] == 9
-    assert payload["summary"]["succeeded"] == 1
-    assert payload["summary"]["failed"] == 0
+    assert payload["summary"]["discover"]["succeeded"] == 1
+    assert payload["summary"]["discover"]["failed"] == 0
+    assert payload["summary"]["opportunity"]["tasks_scanned"] == 1
+    assert payload["summary"]["opportunity"]["notes_scanned"] == 9
+    assert payload["summary"]["opportunity"]["created"] == 9
 
     engine = create_engine(f"sqlite:///{db_path}", future=True)
     with Session(engine) as session:
         notes = session.execute(select(RawNote).order_by(RawNote.note_id.asc())).scalars().all()
+        opportunities = session.execute(select(ProductOpportunity).order_by(ProductOpportunity.id.asc())).scalars().all()
     assert len(notes) == 9
+    assert len(opportunities) == 9
     assert {row.note_id for row in notes} == {f"managed-{i}" for i in range(1, 10)}
+
+
+def test_run_managed_scheduler_script_rejects_standalone_opportunity_mode(tmp_path: Path):
+    db_path = tmp_path / "managed_scheduler_invalid_mode.db"
+    _prepare_db(db_path, enabled=True)
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(_script_path()),
+            "--mode",
+            "opportunity",
+            "--once",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "DATABASE_URL": f"sqlite:///{db_path}",
+            "PYTHONPATH": "src",
+        },
+    )
+
+    assert result.returncode == 2
+    assert "invalid choice" in result.stderr

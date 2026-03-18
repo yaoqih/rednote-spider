@@ -1,13 +1,13 @@
 # SCHEDULER GUIDE
 
-目标：把「discover 抓取入库」和「opportunity 评估」按两阶段定时运行，并支持通过 UI 动态调整 discover/opportunity 的启停与循环间隔。
+目标：只保留一个 discover 调度入口，由它在每轮内串联「discover 抓取入库」和「opportunity 评估/失败重试」，并支持通过 UI 动态调整 discover 的启停与循环间隔。
 
 ## 1. 通用入口脚本
 
-- 单轮执行：`bash scripts/run_scheduled_cycle.sh [discover|opportunity|all]`
-- 常驻循环：`bash scripts/run_scheduled_loop.sh [discover|opportunity|all]`
+- 单轮执行：`bash scripts/run_scheduled_cycle.sh [discover|all]`
+- 常驻循环：`bash scripts/run_scheduled_loop.sh [discover|all]`
 
-脚本内部不会 `source .env`；配置由 Python 侧 `Settings` 读取 `.env`。`discover/opportunity` 常驻循环每轮会读取数据库里的 `scheduler_runtime_config`，所以页面改动会在下一轮生效；同时加互斥锁防止重入（`/tmp/rednote-<mode>.lock`）。
+脚本内部不会 `source .env`；配置由 Python 侧 `Settings` 读取 `.env`。discover 常驻循环每轮会读取数据库里的 `scheduler_runtime_config`，所以页面改动会在下一轮生效；同时加互斥锁防止重入（`/tmp/rednote-discover.lock`）。
 
 ## 2. 可调环境变量
 
@@ -18,7 +18,7 @@ discover：
 - `SCHED_DISCOVER_KEYWORD_LIMIT`（默认 `20`）
 - `SCHED_DISCOVER_NOTE_LIMIT`（默认 `20`）
 
-opportunity：
+discover 内嵌 opportunity sweep：
 - `SCHED_OPPORTUNITY_TASK_ID`（默认 `0`，大于 0 时只跑单任务）
 - `SCHED_OPPORTUNITY_LIMIT_TASKS`（默认 `20`）
 - `SCHED_OPPORTUNITY_PRESCREEN_THRESHOLD`（默认 `3.2`）
@@ -28,8 +28,6 @@ opportunity：
 
 loop：
 - `SCHED_DISCOVER_LOOP_INTERVAL_SECONDS`（默认 `900`，仅首次建默认配置时使用，后续可在 UI 覆盖）
-- `SCHED_OPPORTUNITY_LOOP_INTERVAL_SECONDS`（默认 `600`，仅首次建默认配置时使用，后续可在 UI 覆盖）
-- `SCHED_ALL_LOOP_INTERVAL_SECONDS`（默认 `900`，仅 `all` 模式使用）
 - `SCHED_LOGIN_ALERT_ENABLED`（默认 `true`）
 - `SCHED_LOGIN_ALERT_FROM_EMAIL`（QQ 发件邮箱）
 - `SCHED_LOGIN_ALERT_TO_EMAIL`（收件邮箱，默认同发件）
@@ -65,7 +63,6 @@ crontab -l
 
 模板文件：
 - `deploy/scheduler/supervisor-discover.conf`
-- `deploy/scheduler/supervisor-opportunity.conf`
 - `deploy/supervisor/supervisor-ui.conf`
 
 步骤：
@@ -89,15 +86,13 @@ crontab -l
 1. 先配置 `STREAMLIT_ACCESS_TOKEN`
 2. 绑定到 `127.0.0.1`
 3. 外层再挂 Nginx/Caddy 做鉴权与 HTTPS
-4. 页面里的 `Discover Scheduler` 控 discover/opportunity 的启停与循环间隔
+4. 页面里的 `Discover Scheduler` 控 discover 的启停、循环间隔和 note limit；同一轮内自动执行 opportunity
 
 ## 6. systemd 模板（Linux）
 
 模板文件：
 - `deploy/scheduler/systemd/rednote-discover.service`
 - `deploy/scheduler/systemd/rednote-discover.timer`
-- `deploy/scheduler/systemd/rednote-opportunity.service`
-- `deploy/scheduler/systemd/rednote-opportunity.timer`
 
 步骤：
 1. 把 `__PROJECT_DIR__` 和 `__RUN_USER__` 替换成真实值
@@ -105,11 +100,9 @@ crontab -l
 3. 执行：
    - `sudo systemctl daemon-reload`
    - `sudo systemctl enable --now rednote-discover.timer`
-   - `sudo systemctl enable --now rednote-opportunity.timer`
 4. 查看：
    - `systemctl list-timers | rg rednote`
    - `journalctl -u rednote-discover.service -n 100 --no-pager`
-   - `journalctl -u rednote-opportunity.service -n 100 --no-pager`
 
 ### 当前项目路径直接可用（步骤 2）
 
@@ -119,9 +112,7 @@ mkdir -p logs
 
 for f in \
   deploy/scheduler/systemd/rednote-discover.service \
-  deploy/scheduler/systemd/rednote-opportunity.service \
-  deploy/scheduler/systemd/rednote-discover.timer \
-  deploy/scheduler/systemd/rednote-opportunity.timer
+  deploy/scheduler/systemd/rednote-discover.timer
 do
   sed -e 's|__PROJECT_DIR__|/Users/huyaoqi/Documents/rednote—spider|g' \
       -e "s|__RUN_USER__|$(whoami)|g" "$f" | \
@@ -130,7 +121,6 @@ done
 
 sudo systemctl daemon-reload
 sudo systemctl enable --now rednote-discover.timer
-sudo systemctl enable --now rednote-opportunity.timer
 
 systemctl list-timers | rg rednote
 ```

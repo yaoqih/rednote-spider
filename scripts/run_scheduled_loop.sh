@@ -4,22 +4,16 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-MODE="${1:-all}"
+MODE="${1:-discover}"
 case "$MODE" in
-  discover|opportunity|all) ;;
+  discover|all) ;;
   *)
-    echo "usage: bash scripts/run_scheduled_loop.sh [discover|opportunity|all]" >&2
+    echo "usage: bash scripts/run_scheduled_loop.sh [discover|all]" >&2
     exit 2
     ;;
 esac
 
-if [[ "$MODE" == "discover" ]]; then
-  INTERVAL_SECONDS="${SCHED_DISCOVER_LOOP_INTERVAL_SECONDS:-900}"
-elif [[ "$MODE" == "opportunity" ]]; then
-  INTERVAL_SECONDS="${SCHED_OPPORTUNITY_LOOP_INTERVAL_SECONDS:-600}"
-else
-  INTERVAL_SECONDS="${SCHED_ALL_LOOP_INTERVAL_SECONDS:-900}"
-fi
+INTERVAL_SECONDS="${SCHED_DISCOVER_LOOP_INTERVAL_SECONDS:-900}"
 
 if [[ ! "$INTERVAL_SECONDS" =~ ^[0-9]+$ ]] || [[ "$INTERVAL_SECONDS" -lt 1 ]]; then
   echo "loop interval must be a positive integer, got: ${INTERVAL_SECONDS}" >&2
@@ -33,27 +27,15 @@ if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
   PYTHON_BIN="python3"
 fi
 
-if [[ "$MODE" != "all" ]]; then
-  "$PYTHON_BIN" scripts/init_schema.py
-fi
+"$PYTHON_BIN" scripts/init_schema.py
 
 run_managed_cycle() {
-  "$PYTHON_BIN" scripts/run_managed_scheduler.py --mode "$MODE"
+  "$PYTHON_BIN" scripts/run_managed_scheduler.py --mode discover
 }
 
 run_cycle_with_alert() {
   local cycle_log payload next_interval last_line
   cycle_log="$(mktemp)"
-
-  if [[ "$MODE" == "all" ]]; then
-    if bash scripts/run_scheduled_cycle.sh "$MODE" > >(tee "$cycle_log") 2> >(tee -a "$cycle_log" >&2); then
-      rm -f "$cycle_log"
-      return 0
-    fi
-    "$PYTHON_BIN" scripts/send_login_expiry_alert.py --mode "$MODE" --log-file "$cycle_log" || true
-    rm -f "$cycle_log"
-    return 1
-  fi
 
   if payload="$(run_managed_cycle 2> >(tee -a "$cycle_log" >&2))"; then
     printf '%s\n' "$payload" | tee -a "$cycle_log"
@@ -69,7 +51,7 @@ run_cycle_with_alert() {
   if [[ -n "${payload:-}" ]]; then
     printf '%s\n' "$payload" | tee -a "$cycle_log"
   fi
-  "$PYTHON_BIN" scripts/send_login_expiry_alert.py --mode "$MODE" --log-file "$cycle_log" || true
+  "$PYTHON_BIN" scripts/send_login_expiry_alert.py --mode discover --log-file "$cycle_log" || true
   rm -f "$cycle_log"
   return 1
 }

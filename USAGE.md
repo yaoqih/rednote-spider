@@ -85,7 +85,7 @@ OPPORTUNITY_LLM_PROVIDER=mock
 - 评分对象是产品，不是单条 note。
 - 评分是触发式：新产品首次评分；已有关联产品仅在关联证据量达到上次定义基线 2 倍时重评，否则复用缓存评分。
 - 触发重评时，评分证据会合并“历史已映射 note/comment + 本批增量 note/comment”。
-- crawl/discover 与机会评估已拆分为两阶段：前者只负责抓取入库，后者异步执行。
+- 托管 discover 调度会在每轮 discover 结束后自动执行机会评估与失败重试；独立脚本主要用于手工补跑。
 - note 级失败会写入 `opportunity_note_failure`，可在 UI 的失败专区排查。
 - ignored 证据会写入 `opportunity_note_ignored`，保留初筛分数、阈值和原因。
 
@@ -112,7 +112,7 @@ python ui/app.py
 页面内可直接配置：
 - discover watch keyword
 - 每个关键词的轮询分钟与启用状态
-- discover/opportunity scheduler 的全局启停与循环间隔
+- discover scheduler 的全局启停、循环间隔与 note limit（同一轮内自动执行 opportunity）
 - 统一登录控制面板（probe / 二维码 / 手机号 / 短信验证码 / 安全校验继续探测）
 
 登录运行时说明：
@@ -133,16 +133,14 @@ PYTHONPATH=src pytest -q
 PYTHONPATH=src python scripts/ci_migration_gate.py
 ```
 
-## 8. 定时调度（两阶段异步）
+## 8. 定时调度（单一 discover 编排）
 
 ```bash
 # 单轮
 bash scripts/run_scheduled_cycle.sh discover
-bash scripts/run_scheduled_cycle.sh opportunity
 
 # 常驻循环
 bash scripts/run_scheduled_loop.sh discover
-bash scripts/run_scheduled_loop.sh opportunity
 ```
 
 `cron/supervisor/systemd` 模板见：

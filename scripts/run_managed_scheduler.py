@@ -8,8 +8,6 @@ import json
 import os
 from dataclasses import asdict
 
-from sqlalchemy.orm import Session
-
 from rednote_spider.config import settings
 from rednote_spider.database import SessionLocal
 from rednote_spider.discover_collectors import CommandKeywordCollector
@@ -23,7 +21,7 @@ logger = get_logger(__name__)
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run one managed scheduler iteration")
-    parser.add_argument("--mode", choices=["discover", "opportunity"], required=True)
+    parser.add_argument("--mode", choices=["discover"], required=True)
     parser.add_argument("--once", action="store_true", help="accepted for compatibility; single-run is default")
     return parser
 
@@ -65,6 +63,13 @@ def _run_opportunity_once() -> dict[str, int]:
         return asdict(summary)
 
 
+def _run_discover_pipeline_once(*, note_limit: int) -> dict[str, object]:
+    return {
+        "discover": _run_discover_once(note_limit=note_limit),
+        "opportunity": _run_opportunity_once(),
+    }
+
+
 def run_mode_once(mode: str) -> dict[str, object]:
     config = SchedulerConfigService(SessionLocal).get_config(mode)
     payload: dict[str, object] = {
@@ -82,10 +87,7 @@ def run_mode_once(mode: str) -> dict[str, object]:
         )
         return payload
 
-    if mode == "discover":
-        summary = _run_discover_once(note_limit=int(payload["note_limit"]))
-    else:
-        summary = _run_opportunity_once()
+    summary = _run_discover_pipeline_once(note_limit=int(payload["note_limit"]))
 
     payload["status"] = "completed"
     payload["summary"] = summary
