@@ -179,3 +179,37 @@ def test_discover_service_runs_crawl_stage_and_updates_polling_cursor(tmp_path: 
         assert task.status == TaskStatus.done
         assert task.error_message is None
         assert keyword.last_polled_at is not None
+
+
+
+def test_discover_service_delete_keyword_removes_watch_row(tmp_path: Path):
+    sf = _session_factory(tmp_path)
+    service = DiscoverService(sf, collector=None)
+    created = service.upsert_keyword(keyword="delete me", poll_interval_minutes=30)
+
+    service.delete_keyword(created.id)
+
+    with sf() as session:
+        row = session.get(DiscoverWatchKeyword, created.id)
+        assert row is None
+
+
+
+def test_discover_service_update_keyword_supports_keyword_text_change(tmp_path: Path):
+    sf = _session_factory(tmp_path)
+    service = DiscoverService(sf, collector=None)
+    created = service.upsert_keyword(keyword="old keyword", poll_interval_minutes=30)
+
+    updated = service.update_keyword(
+        created.id,
+        keyword="new keyword",
+        platform="douyin",
+        poll_interval_minutes=45,
+        enabled=False,
+    )
+
+    assert updated.id == created.id
+    assert updated.keyword == "new keyword"
+    assert updated.platform == "douyin"
+    assert updated.poll_interval_minutes == 45
+    assert updated.enabled is False

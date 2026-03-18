@@ -87,3 +87,66 @@ def test_invalid_transition_raises(session_factory):
 
         with pytest.raises(InvalidTaskTransitionError):
             service.start_task(done.id)
+
+
+
+def test_list_tasks_supports_status_platform_and_keyword_filters(session_factory):
+    with session_factory() as session:
+        service = CrawlTaskService(session)
+        first = service.create_task("通勤收纳", platform="xhs")
+        second = service.create_task("租房家电", platform="xhs")
+        third = service.create_task("commute gadget", platform="douyin")
+        service.start_task(second.id)
+        service.fail_task(second.id, "boom")
+        service.start_task(third.id)
+        service.complete_task(third.id, note_count=3)
+
+        filtered = service.list_tasks(statuses=[TaskStatus.failed], platform="xhs", keywords_query="租房")
+
+        assert [row.id for row in filtered] == [second.id]
+
+
+def test_update_task_allows_pending_and_failed_only(session_factory):
+    with session_factory() as session:
+        service = CrawlTaskService(session)
+        pending = service.create_task("旧关键词", platform="xhs")
+        updated = service.update_task(pending.id, keywords="新关键词", platform="douyin")
+        assert updated.keywords == "新关键词"
+        assert updated.platform == "douyin"
+
+        failed = service.create_task("失败任务")
+        service.start_task(failed.id)
+        service.fail_task(failed.id, "network timeout")
+        retried = service.update_task(failed.id, keywords="失败任务-修正", platform="xhs")
+        assert retried.keywords == "失败任务-修正"
+
+        running = service.create_task("运行中任务")
+        service.start_task(running.id)
+        with pytest.raises(InvalidTaskTransitionError):
+            service.update_task(running.id, keywords="不允许")
+
+        done = service.create_task("已完成")
+        service.start_task(done.id)
+        service.complete_task(done.id, note_count=1)
+        with pytest.raises(InvalidTaskTransitionError):
+            service.update_task(done.id, keywords="不允许")
+
+
+def test_delete_task_allows_pending_and_failed_only(session_factory):
+    with session_factory() as session:
+        service = CrawlTaskService(session)
+        pending = service.create_task("待删除")
+        service.delete_task(pending.id)
+        assert session.get(CrawlTask, pending.id) is None
+
+        failed = service.create_task("失败待删除")
+        service.start_task(failed.id)
+        service.fail_task(failed.id, "err")
+        service.delete_task(failed.id)
+        assert session.get(CrawlTask, failed.id) is None
+
+        done = service.create_task("完成只读")
+        service.start_task(done.id)
+        service.complete_task(done.id, note_count=1)
+        with pytest.raises(InvalidTaskTransitionError):
+            service.delete_task(done.id)

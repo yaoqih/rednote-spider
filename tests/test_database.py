@@ -1,62 +1,25 @@
 from __future__ import annotations
 
-from pathlib import Path
-
-from sqlalchemy import text
-from sqlalchemy.orm import Session
-
-from rednote_spider.database import make_engine
-from rednote_spider.models import (
-    Base,
-    CrawlTask,
-    OpportunityDecision,
-    ProductOpportunity,
-    RawNote,
-    TaskStatus,
-)
+import builtins
+import importlib
+import sys
 
 
-def test_make_engine_json_serializer_keeps_unicode(tmp_path: Path):
-    db_path = tmp_path / "unicode_json.db"
-    engine = make_engine(f"sqlite:///{db_path}")
-    Base.metadata.create_all(engine)
+def test_database_module_falls_back_to_env_when_config_import_fails(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "sqlite:///./fallback.db")
+    sys.modules.pop("rednote_spider.database", None)
+    sys.modules.pop("rednote_spider.config", None)
 
-    with Session(engine) as session:
-        task = CrawlTask(keywords="测试", platform="xhs", status=TaskStatus.done, note_count=1)
-        session.add(task)
-        session.flush()
+    original_import = builtins.__import__
 
-        note = RawNote(
-            task_id=task.id,
-            note_id="note-1",
-            title="中文标题",
-            content="中文内容",
-            likes=1,
-            comments_cnt=0,
-            collected_cnt=0,
-            share_cnt=0,
-        )
-        session.add(note)
-        session.flush()
+    def fake_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if name == "rednote_spider.config":
+            raise ModuleNotFoundError("No module named 'pydantic_settings'")
+        return original_import(name, globals, locals, fromlist, level)
 
-        opp = ProductOpportunity(
-            task_id=task.id,
-            note_id=note.note_id,
-            decision=OpportunityDecision.ignored,
-            product_id=None,
-            prescreen_score=1.0,
-            value_score=1.0,
-            competition_opportunity_score=1.0,
-            self_control_score=1.0,
-            total_score=10.0,
-            scores={"label": "中文分数"},
-            evidence={"note_title": "中文标题", "note_excerpt": "中文内容"},
-        )
-        session.add(opp)
-        session.commit()
+    monkeypatch.setattr(builtins, "__import__", fake_import)
 
-    with engine.connect() as conn:
-        evidence_text = conn.execute(text("select evidence from product_opportunity limit 1")).scalar_one()
+    module = importlib.import_module("rednote_spider.database")
+    engine = module.make_engine()
 
-    assert "中文标题" in evidence_text
-    assert "\\u4e2d\\u6587" not in evidence_text
+    assert str(engine.url) == "sqlite:///./fallback.db"

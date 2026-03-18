@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shlex
 import subprocess
 import sys
@@ -20,6 +21,8 @@ import time
 from collections import deque
 from pathlib import Path
 from typing import Any
+
+LOGIN_EVENT_PREFIX = "[rednote-login]"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -50,20 +53,31 @@ def build_parser() -> argparse.ArgumentParser:
         default=600,
         help="Timeout for --crawler-cmd in seconds; set <=0 to disable timeout.",
     )
+    parser.add_argument(
+        "--probe-cmd",
+        default="",
+        help="Optional auth probe command executed before --crawler-cmd. If it emits probe_result ok=false, crawl fails fast.",
+    )
+    parser.add_argument(
+        "--probe-timeout-seconds",
+        type=int,
+        default=60,
+        help="Timeout for --probe-cmd in seconds; set <=0 to disable timeout.",
+    )
     return parser
 
 
-def maybe_run_external_command(
+def _run_command(
     command_template: str,
     *,
     keywords: str,
     max_notes: int,
     crawler_cwd: str = "",
     timeout_seconds: int = 600,
-) -> None:
+) -> tuple[int, bool, str]:
     template = command_template.strip()
     if not template:
-        return
+        return 0, False, ""
     cwd = resolve_crawler_cwd(crawler_cwd)
     command = template.format(keywords=keywords, max_notes=max_notes)
     process = subprocess.Popen(
@@ -72,6 +86,7 @@ def maybe_run_external_command(
         stderr=subprocess.PIPE,
         text=False,
         cwd=str(cwd) if cwd else None,
+        env=_build_child_env(),
     )
     detail_tail: deque[str] = deque(maxlen=300)
 
@@ -108,16 +123,120 @@ def maybe_run_external_command(
             thread.join()
 
     detail = "".join(detail_tail).strip()
+    return int(process.returncode or 0), timed_out, detail
+
+
+def maybe_run_external_command(
+    command_template: str,
+    *,
+    keywords: str,
+    max_notes: int,
+    crawler_cwd: str = "",
+    timeout_seconds: int = 600,
+) -> None:
+    returncode, timed_out, detail = _run_command(
+        command_template,
+        keywords=keywords,
+        max_notes=max_notes,
+        crawler_cwd=crawler_cwd,
+        timeout_seconds=timeout_seconds,
+    )
     if timed_out:
         suffix = f": {detail[:500]}" if detail else ""
         raise RuntimeError(
             f"crawler command timed out after {timeout_seconds}s{suffix}. "
             "可能卡在扫码/验证码，或外部爬虫仍在长时间执行。"
         )
-    if process.returncode != 0:
+    if returncode != 0:
         if not detail:
-            detail = f"exit code {process.returncode}"
+            detail = f"exit code {returncode}"
         raise RuntimeError(f"crawler command failed: {detail}")
+
+
+def parse_login_runtime_event(line: str) -> dict[str, Any] | None:
+    raw = (line or "").strip()
+    if not raw.startswith(LOGIN_EVENT_PREFIX):
+        return None
+    try:
+        payload = json.loads(raw[len(LOGIN_EVENT_PREFIX):].strip())
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    event_type = str(payload.get("event_type") or "").strip()
+    if not event_type:
+        return None
+    nested_payload = payload.get("payload")
+    if not isinstance(nested_payload, dict):
+        nested_payload = {}
+    return {
+        "event_type": event_type,
+        "message": str(payload.get("message") or ""),
+        "attempt_id": int(payload.get("attempt_id") or 0),
+        "payload": nested_payload,
+    }
+
+
+def _extract_probe_result(detail: str) -> tuple[bool | None, dict[str, Any] | None]:
+    latest_event: dict[str, Any] | None = None
+    for raw_line in str(detail or "").splitlines():
+        event = parse_login_runtime_event(raw_line)
+        if event is None:
+            continue
+        if event.get("event_type") != "probe_result":
+            continue
+        latest_event = event
+    if latest_event is None:
+        return None, None
+    payload = latest_event.get("payload")
+    if not isinstance(payload, dict):
+        payload = {}
+    return bool(payload.get("ok")), latest_event
+
+
+def maybe_run_probe_command(
+    command_template: str,
+    *,
+    keywords: str,
+    max_notes: int,
+    crawler_cwd: str = "",
+    timeout_seconds: int = 60,
+) -> None:
+    template = command_template.strip()
+    if not template:
+        return
+    returncode, timed_out, detail = _run_command(
+        template,
+        keywords=keywords,
+        max_notes=max_notes,
+        crawler_cwd=crawler_cwd,
+        timeout_seconds=timeout_seconds,
+    )
+    if timed_out:
+        suffix = f": {detail[:500]}" if detail else ""
+        raise RuntimeError(f"login probe timed out after {timeout_seconds}s{suffix}")
+    if returncode != 0:
+        if not detail:
+            detail = f"exit code {returncode}"
+        raise RuntimeError(f"login probe failed: {detail}")
+
+    ok, event = _extract_probe_result(detail)
+    if ok is not False:
+        return
+
+    message = str((event or {}).get("message") or "").strip() or "probe reported unauthenticated session"
+    payload = (event or {}).get("payload")
+    if not isinstance(payload, dict):
+        payload = {}
+    profile_dir = str(payload.get("profile_dir") or "").strip()
+    suffix = f" profile_dir={profile_dir}" if profile_dir else ""
+    raise RuntimeError(f"login_required: {message}{suffix}")
+
+
+def _build_child_env() -> dict[str, str]:
+    env = dict(os.environ)
+    env.pop("VIRTUAL_ENV", None)
+    return env
 
 
 def resolve_crawler_cwd(raw_value: str) -> Path | None:
@@ -130,6 +249,33 @@ def resolve_crawler_cwd(raw_value: str) -> Path | None:
     return path
 
 
+def resolve_source_path(raw_value: str, *, crawler_cwd: str = "", expected_kind: str) -> Path:
+    token = raw_value.strip()
+    if not token:
+        raise ValueError(f"source path is required for {expected_kind}")
+
+    raw_path = Path(token).expanduser()
+    candidates: list[Path] = []
+    if raw_path.is_absolute():
+        candidates.append(raw_path.resolve())
+    else:
+        candidates.append(raw_path.resolve())
+        crawler_root = resolve_crawler_cwd(crawler_cwd)
+        if crawler_root is not None:
+            candidates.append((crawler_root / raw_path).resolve())
+
+    for candidate in candidates:
+        if not candidate.exists():
+            continue
+        if expected_kind == "file" and candidate.is_file():
+            return candidate
+        if expected_kind == "dir" and candidate.is_dir():
+            return candidate
+
+    target = candidates[-1] if candidates else raw_path.resolve()
+    raise ValueError(f"json {expected_kind} not found: {target}")
+
+
 def load_source_payload(
     args: argparse.Namespace,
     *,
@@ -138,17 +284,13 @@ def load_source_payload(
     if args.source == "json-file":
         if not args.json_file.strip():
             raise ValueError("--json-file is required when --source=json-file")
-        path = Path(args.json_file).expanduser().resolve()
-        if not path.exists():
-            raise ValueError(f"json file not found: {path}")
+        path = resolve_source_path(args.json_file, crawler_cwd=args.crawler_cwd, expected_kind="file")
         return json.loads(path.read_text(encoding="utf-8"))
 
     if args.source == "json-dir":
         if not args.json_dir.strip():
             raise ValueError("--json-dir is required when --source=json-dir")
-        base = Path(args.json_dir).expanduser().resolve()
-        if not base.exists() or not base.is_dir():
-            raise ValueError(f"json dir not found: {base}")
+        base = resolve_source_path(args.json_dir, crawler_cwd=args.crawler_cwd, expected_kind="dir")
         notes: list[dict[str, Any]] = []
         comments: list[dict[str, Any]] = []
         for file in sorted(base.rglob("*.json")):
@@ -373,6 +515,13 @@ def main() -> None:
 
     try:
         run_started_at: float | None = None
+        maybe_run_probe_command(
+            args.probe_cmd,
+            keywords=args.keywords,
+            max_notes=args.max_notes,
+            crawler_cwd=args.crawler_cwd,
+            timeout_seconds=int(args.probe_timeout_seconds),
+        )
         if args.crawler_cmd.strip():
             run_started_at = time.time()
         maybe_run_external_command(

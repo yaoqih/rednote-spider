@@ -4,16 +4,29 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 import json
+import os
 
 from sqlalchemy import Engine, create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
-from .config import settings
+DEFAULT_DATABASE_URL = "sqlite:///./rednote.db"
+
+
+def _default_database_url() -> str:
+    raw = os.getenv("DATABASE_URL", DEFAULT_DATABASE_URL)
+    return raw or DEFAULT_DATABASE_URL
+
+
+try:
+    from .config import settings as _settings
+except Exception:  # noqa: BLE001
+    _settings = None
 
 
 def make_engine(database_url: str | None = None) -> Engine:
+    resolved_database_url = database_url or getattr(_settings, "database_url", None) or _default_database_url()
     return create_engine(
-        database_url or settings.database_url,
+        resolved_database_url,
         future=True,
         json_serializer=lambda payload: json.dumps(payload, ensure_ascii=False),
         json_deserializer=json.loads,

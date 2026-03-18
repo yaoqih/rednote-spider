@@ -8,3 +8,5 @@ exports/
 crawler_output/
 iterations/
 *.egg-info/
+logs/
+*.lock

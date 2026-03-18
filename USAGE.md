@@ -91,14 +91,38 @@ OPPORTUNITY_LLM_PROVIDER=mock
 
 ## 6. UI
 
+开发态：
+
 ```bash
 streamlit run ui/app.py
+```
+
+部署态（适合 supervisor）：
+
+```bash
+bash scripts/run_ui_server.sh
 ```
 
 不要用：
 
 ```bash
 python ui/app.py
+```
+
+页面内可直接配置：
+- discover watch keyword
+- 每个关键词的轮询分钟与启用状态
+- discover/opportunity scheduler 的全局启停与循环间隔
+- 统一登录控制面板（probe / 二维码 / 手机号 / 短信验证码 / 安全校验继续探测）
+
+登录运行时说明：
+
+```bash
+# supervisor 常驻控制器
+python scripts/run_login_qr_worker.py
+
+# login-only runtime（由控制器拉起，一般不手工调用）
+python scripts/run_mediacrawler_login_only.py --platform xhs --method probe --attempt-id 0
 ```
 
 ## 7. 回归验证
@@ -123,3 +147,4 @@ bash scripts/run_scheduled_loop.sh opportunity
 
 `cron/supervisor/systemd` 模板见：
 - `SCHEDULER_GUIDE.md`
+- `deploy/supervisor/supervisor-ui.conf`

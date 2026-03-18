@@ -81,6 +81,41 @@ class DiscoverService:
                 stmt = stmt.where(DiscoverWatchKeyword.enabled.is_(True))
             return session.execute(stmt).scalars().all()
 
+    def update_keyword(
+        self,
+        keyword_id: int,
+        *,
+        keyword: str,
+        platform: str = "xhs",
+        poll_interval_minutes: int = 60,
+        enabled: bool = True,
+    ) -> DiscoverWatchKeyword:
+        if poll_interval_minutes < 1:
+            raise ValueError("poll_interval_minutes must be >= 1")
+        keyword_text = keyword.strip()
+        if not keyword_text:
+            raise ValueError("keyword is required")
+
+        with self.session_factory() as session:
+            row = session.get(DiscoverWatchKeyword, keyword_id)
+            if row is None:
+                raise ValueError(f"keyword_id={keyword_id} not found")
+            duplicate = session.execute(
+                select(DiscoverWatchKeyword).where(
+                    DiscoverWatchKeyword.keyword == keyword_text,
+                    DiscoverWatchKeyword.id != keyword_id,
+                )
+            ).scalar_one_or_none()
+            if duplicate is not None:
+                raise ValueError(f"keyword already exists: {keyword_text}")
+            row.keyword = keyword_text
+            row.platform = platform
+            row.poll_interval_minutes = poll_interval_minutes
+            row.enabled = enabled
+            session.commit()
+            session.refresh(row)
+            return row
+
     def set_keyword_enabled(self, keyword_id: int, enabled: bool) -> DiscoverWatchKeyword:
         with self.session_factory() as session:
             row = session.get(DiscoverWatchKeyword, keyword_id)
@@ -90,6 +125,14 @@ class DiscoverService:
             session.commit()
             session.refresh(row)
             return row
+
+    def delete_keyword(self, keyword_id: int) -> None:
+        with self.session_factory() as session:
+            row = session.get(DiscoverWatchKeyword, keyword_id)
+            if row is None:
+                raise ValueError(f"keyword_id={keyword_id} not found")
+            session.delete(row)
+            session.commit()
 
     def run_once(
         self,

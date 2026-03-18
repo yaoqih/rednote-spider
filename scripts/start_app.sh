@@ -13,5 +13,4 @@ if [[ "${1:-}" != "--no-install" ]]; then
   "$PYTHON_BIN" -m pip install -e '.[dev]' --no-build-isolation
 fi
 
-"$PYTHON_BIN" scripts/init_schema.py
-exec "$PYTHON_BIN" -m streamlit run ui/app.py
+exec bash scripts/run_ui_server.sh

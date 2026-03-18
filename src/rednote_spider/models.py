@@ -43,6 +43,24 @@ class OpportunityDecision(str, Enum):
     created = "created"
 
 
+class LoginAuthState(str, Enum):
+    unknown = "unknown"
+    authenticated = "authenticated"
+    unauthenticated = "unauthenticated"
+
+
+class LoginFlowState(str, Enum):
+    idle = "idle"
+    probing = "probing"
+    starting = "starting"
+    waiting_qr_scan = "waiting_qr_scan"
+    waiting_phone_code = "waiting_phone_code"
+    waiting_security_verification = "waiting_security_verification"
+    verifying = "verifying"
+    need_human_action = "need_human_action"
+    failed = "failed"
+
+
 class CrawlTask(Base):
     __tablename__ = "crawl_task"
 
@@ -125,6 +143,72 @@ class DiscoverWatchKeyword(Base):
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=False), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class SchedulerRuntimeConfig(Base):
+    __tablename__ = "scheduler_runtime_config"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    mode: Mapped[str] = mapped_column(String(32), nullable=False, unique=True, index=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    loop_interval_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=60)
+    note_limit: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=False), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=False), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class LoginRuntimeState(Base):
+    __tablename__ = "login_runtime_state"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    platform: Mapped[str] = mapped_column(String(32), nullable=False, unique=True, index=True, default="xhs")
+    auth_state: Mapped[LoginAuthState] = mapped_column(
+        SAEnum(LoginAuthState, native_enum=False), nullable=False, default=LoginAuthState.unknown
+    )
+    flow_state: Mapped[LoginFlowState] = mapped_column(
+        SAEnum(LoginFlowState, native_enum=False), nullable=False, default=LoginFlowState.idle
+    )
+    active_method: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    attempt_id: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    action_nonce: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    handled_action_nonce: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    requested_action: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    phone_number: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    submitted_sms_code: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    sms_code_nonce: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    handled_sms_code_nonce: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    qr_image_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    security_image_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    last_probe_ok: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    last_probe_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=False), nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    controller_pid: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    child_pid: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    profile_dir: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=False), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=False), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class LoginEvent(Base):
+    __tablename__ = "login_event"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    platform: Mapped[str] = mapped_column(String(32), nullable=False, index=True, default="xhs")
+    attempt_id: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    event_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    message: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=False), nullable=False, server_default=func.now()
     )
 
 
@@ -243,6 +327,9 @@ CORE_TABLES: tuple[str, ...] = (
     "crawl_task_note",
     "raw_comment",
     "discover_watch_keyword",
+    "scheduler_runtime_config",
+    "login_runtime_state",
+    "login_event",
     "product",
     "product_assessment",
     "product_opportunity",

@@ -138,6 +138,52 @@ def test_script_json_file_source_requires_comment_id(tmp_path: Path):
     assert "comments[0].comment_id is required" in result.stderr
 
 
+def test_script_json_dir_source_resolves_relative_json_dir_from_crawler_cwd(tmp_path: Path):
+    crawler_dir = tmp_path / "mock_crawler_repo"
+    crawler_dir.mkdir(parents=True, exist_ok=True)
+
+    writer = crawler_dir / "emit_payload.py"
+    writer.write_text(
+        "\n".join(
+            [
+                "import json",
+                "from pathlib import Path",
+                "out = Path('generated/xhs/json')",
+                "out.mkdir(parents=True, exist_ok=True)",
+                "payload = [{'id': 'mc-rel-1', 'desc': '相对路径可用'}]",
+                "target = out / 'search_contents_test.json'",
+                "target.write_text(json.dumps(payload, ensure_ascii=False), encoding='utf-8')",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(_script_path()),
+            "--keywords",
+            "通勤",
+            "--max-notes",
+            "5",
+            "--source",
+            "json-dir",
+            "--json-dir",
+            "generated/xhs/json",
+            "--crawler-cwd",
+            str(crawler_dir),
+            "--crawler-cmd",
+            f"{sys.executable} emit_payload.py",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(result.stdout)
+    assert [row["note_id"] for row in payload["notes"]] == ["mc-rel-1"]
+
+
 def test_script_json_dir_source_runs_crawler_cmd_in_cwd(tmp_path: Path):
     crawler_dir = tmp_path / "mock_crawler_repo"
     crawler_dir.mkdir(parents=True, exist_ok=True)
@@ -305,6 +351,45 @@ def test_script_reports_crawler_cmd_timeout(tmp_path: Path):
     assert "crawler command timed out after 1s" in result.stderr
 
 
+def test_script_unsets_virtual_env_for_crawler_child_process(tmp_path: Path):
+    source = tmp_path / "source.json"
+    source.write_text("[]", encoding="utf-8")
+
+    env_probe = tmp_path / "env_probe.py"
+    env_probe.write_text(
+        "\n".join(
+            [
+                "import os, sys",
+                "print(f\"child_virtual_env={os.getenv('VIRTUAL_ENV', '')}\", file=sys.stderr)",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(_script_path()),
+            "--keywords",
+            "通勤",
+            "--max-notes",
+            "5",
+            "--source",
+            "json-file",
+            "--json-file",
+            str(source),
+            "--crawler-cmd",
+            f"{sys.executable} {env_probe}",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "VIRTUAL_ENV": "/tmp/fake-venv"},
+    )
+    assert "child_virtual_env=" in result.stderr
+    assert "/tmp/fake-venv" not in result.stderr
+
+
 def test_script_json_dir_splits_contents_and_comments(tmp_path: Path):
     json_dir = tmp_path / "xhs" / "json"
     json_dir.mkdir(parents=True, exist_ok=True)
@@ -422,3 +507,121 @@ def test_script_json_dir_with_crawler_cmd_ignores_stale_files(tmp_path: Path):
     payload = json.loads(result.stdout)
     assert [row["note_id"] for row in payload["notes"]] == ["new-note"]
     assert [row["comment_id"] for row in payload["comments"]] == ["new-c"]
+
+
+def test_script_probe_cmd_fails_fast_when_login_is_required(tmp_path: Path):
+    source = tmp_path / "source.json"
+    source.write_text("[]", encoding="utf-8")
+
+    probe = tmp_path / "probe.py"
+    probe.write_text(
+        "\n".join(
+            [
+                "import sys",
+                "print('[rednote-login]{\"event_type\":\"probe_result\",\"attempt_id\":0,\"message\":\"not logged in\",\"payload\":{\"ok\":false,\"profile_dir\":\"/tmp/xhs-profile\"}}', file=sys.stderr, flush=True)",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    crawler = tmp_path / "crawler.py"
+    marker = tmp_path / "crawler-ran.txt"
+    crawler.write_text(
+        "\n".join(
+            [
+                "from pathlib import Path",
+                f"Path({str(marker)!r}).write_text('ran', encoding='utf-8')",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(_script_path()),
+            "--keywords",
+            "收纳",
+            "--max-notes",
+            "5",
+            "--source",
+            "json-file",
+            "--json-file",
+            str(source),
+            "--probe-cmd",
+            f"{sys.executable} {probe}",
+            "--crawler-cmd",
+            f"{sys.executable} {crawler}",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert "login_required" in result.stderr
+    assert "not logged in" in result.stderr
+    assert not marker.exists()
+
+
+def test_script_probe_cmd_allows_crawl_when_authenticated(tmp_path: Path):
+    source = tmp_path / "source.json"
+    source.write_text(
+        json.dumps(
+            {
+                "notes": [{"note_id": "n-1", "title": "标题"}],
+                "comments": [],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    probe = tmp_path / "probe_ok.py"
+    probe.write_text(
+        "\n".join(
+            [
+                "import sys",
+                "print('[rednote-login]{\"event_type\":\"probe_result\",\"attempt_id\":0,\"message\":\"already logged in\",\"payload\":{\"ok\":true}}', file=sys.stderr, flush=True)",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    crawler = tmp_path / "crawler.py"
+    marker = tmp_path / "crawler-ran.txt"
+    crawler.write_text(
+        "\n".join(
+            [
+                "from pathlib import Path",
+                f"Path({str(marker)!r}).write_text('ran', encoding='utf-8')",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(_script_path()),
+            "--keywords",
+            "收纳",
+            "--max-notes",
+            "5",
+            "--source",
+            "json-file",
+            "--json-file",
+            str(source),
+            "--probe-cmd",
+            f"{sys.executable} {probe}",
+            "--crawler-cmd",
+            f"{sys.executable} {crawler}",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(result.stdout)
+    assert [row["note_id"] for row in payload["notes"]] == ["n-1"]
+    assert marker.read_text(encoding="utf-8") == "ran"

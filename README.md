@@ -8,16 +8,19 @@
 机会发现链路：
 `raw_note/raw_comment -> LLM 初筛 -> LLM 匹配已有产品或新建产品 -> 产品级 LLM 多维打分`
 
+登录链路：
+`Streamlit Login Control -> unified login controller -> login-only MediaCrawler runtime -> persistent browser profile + pong()`
+
 ## Quick Start
 
 ```bash
 python -m pip install -e '.[dev]' --no-build-isolation
 cp .env.example .env
 python scripts/init_schema.py
-streamlit run ui/app.py
+bash scripts/run_ui_server.sh
 ```
 
-不要用 `python ui/app.py` 直接启动，Streamlit 必须通过 `streamlit run` 启动。
+不要用 `python ui/app.py` 直接启动。开发时可用 `streamlit run ui/app.py`，部署时建议用 `bash scripts/run_ui_server.sh` 配合 supervisor。
 
 ## 配置（.env）
 
@@ -25,6 +28,9 @@ streamlit run ui/app.py
 DATABASE_URL=sqlite:///./rednote.db
 APP_ENV=dev
 STREAMLIT_ACCESS_TOKEN=
+STREAMLIT_SERVER_ADDRESS=127.0.0.1
+STREAMLIT_SERVER_PORT=8501
+STREAMLIT_SERVER_HEADLESS=true
 CRAWL_BACKEND=command
 CRAWL_COMMAND_TEMPLATE=python external_crawler.py --keywords "{keywords}" --max-notes {max_notes}
 CRAWL_COMMAND_TIMEOUT_SECONDS=600
@@ -34,6 +40,8 @@ OPPORTUNITY_LLM_BASE_URL=https://api.openai.com/v1
 OPPORTUNITY_LLM_MODEL=gpt-4.1-mini
 OPPORTUNITY_LLM_TIMEOUT_SECONDS=600
 OPPORTUNITY_LLM_TEMPERATURE=0.1
+SCHED_DISCOVER_LOOP_INTERVAL_SECONDS=900
+SCHED_OPPORTUNITY_LOOP_INTERVAL_SECONDS=600
 LOG_LEVEL=INFO
 ```
 
@@ -50,16 +58,18 @@ LOG_LEVEL=INFO
   - `crawl_task_note`
   - `raw_comment`
 - `discover_watch_keyword`
+- `scheduler_runtime_config`
 - `product`
 - `product_assessment`
 - `product_opportunity`
 - `opportunity_note_failure`
 - `opportunity_note_ignored`
 
-## 核心脚本（10 个）
+## 核心脚本（12 个）
 
 - `scripts/start_app.sh`
 - `scripts/init_schema.py`
+- `scripts/run_ui_server.sh`
 - `scripts/ci_migration_gate.py`
 - `scripts/run_external_crawler.py`
 - `scripts/verify_live_crawl.py`
@@ -68,6 +78,7 @@ LOG_LEVEL=INFO
 - `scripts/run_product_opportunity_cycle.py`
 - `scripts/run_scheduled_cycle.sh`
 - `scripts/run_scheduled_loop.sh`
+- `scripts/run_managed_scheduler.py`
 
 ## Discover（定时采集）
 
@@ -78,6 +89,24 @@ python scripts/run_discover_cycle.py \
   --keyword-limit 20 \
   --note-limit 20 \
   --command-template 'python external_crawler.py --keywords "{keywords}" --max-notes {max_notes}'
+```
+
+页面里的 `Discover Scheduler` 可配置 `discover/opportunity` 的 `enabled` 与 `loop interval seconds`；`Discover Watchlist` 可新增关键词并调整每个关键词的轮询分钟与启用状态。
+
+## 登录控制
+
+UI 的 `Login` 标签页已经切到统一登录控制面板：
+- `auth_state` 只反映最新 `pong()` 探测结果
+- `flow_state` 只反映当前二维码/手机号/安全校验流程
+- 手机号登录与二维码登录共享同一个 MediaCrawler profile
+- 安全校验会保留当前浏览器上下文，支持人工接管后再继续探测
+
+关键环境变量：
+
+```bash
+LOGIN_RUNTIME_PYTHON=/root/MediaCrawler/.venv/bin/python
+LOGIN_RUNTIME_CRAWLER_CWD=../MediaCrawler
+LOGIN_CONTROLLER_POLL_SECONDS=2
 ```
 
 ## 产品机会评估
